@@ -44,13 +44,13 @@ class GraphicsHandler:
         words = line.split(" ")
         parsed_line = []
         for word in words:
-            if word.startswith("[~|bold|~]"):
+            if word.startswith(""):
                 parsed_line.append((word[10:], "bold"))
-            elif word.startswith("[~|ital|~]"):
+            elif word.startswith(""):
                 parsed_line.append((word[10:], "italic"))
-            elif word.startswith("[~|i+bol|~]"):
+            elif word.startswith(""):
                 parsed_line.append((word[10:], "italic+bold"))
-            elif word.startswith("[~|norm|~]"):
+            elif word.startswith(""):
                 parsed_line.append((word[10:], "normal"))
             else:
                 parsed_line.append((word, "normal"))
@@ -78,18 +78,27 @@ class GraphicsHandler:
         pygame.draw.line(self.editor.screen, self.editor.outlineColor, (start_pos[0] + line_number_width, start_pos[1]), (start_pos[0] + line_number_width, HEIGHT))
 
     def drawCursor(self):
-        content = self.editor.content.replace("\t", "    ")
-        tabs = self.editor.content[:self.editor.cursorPosition].count("\t")
-        contentBeforeCursor = content[:self.editor.cursorPosition + tabs * 4]
-        cursorLineIndex = contentBeforeCursor.count('\n') - self.editor.verticalOffset
-        charInLineAmount = len(contentBeforeCursor.split('\n')[-1])
-        
+        # Calculate the actual cursor position considering tabs
+        line_number_width = max(30, len(str(len(self.editor.content))) * 10)
+        contentBeforeCursor = self.editor.content[:self.editor.cursorPosition]
+        expandedBeforeCursor = contentBeforeCursor.replace("\t", "    ")  # Replace tabs with spaces
+        cursorLineIndex = expandedBeforeCursor.count('\n') - self.editor.verticalOffset
+        charInLineAmount = len(expandedBeforeCursor.split('\n')[-1])
+
         y_offset = self.fonts["normal"].render("W", True, "white").get_height() + 2
         y = OFFSET[1] + (cursorLineIndex + 1) * y_offset
-        x = OFFSET[0] + (charInLineAmount + 3) * (self.fonts["normal"].render("W", True, "white").get_width())
+        x = OFFSET[0] + charInLineAmount * (self.fonts["normal"].render("W", True, "white").get_width()) + line_number_width
 
         if y >= OFFSET[1] and y < HEIGHT - OFFSET[1]:  # Draw cursor only if it's within the visible area
             pygame.draw.line(self.editor.screen, self.editor.cursorColor, (x, y), (x, y - self.fonts["normal"].render("W", True, "white").get_height()))
+
+    def drawBackground(self):
+        c1, c2 = self.editor.backgroundColor1, self.editor.backgroundColor2
+        surf = pygame.Surface((2, 2))
+        pygame.draw.line(surf, c1, (0, 0), (1, 0))
+        pygame.draw.line(surf, c2, (0, 1), (1, 1))
+        rect = pygame.transform.smoothscale(surf, (WIDTH, HEIGHT))
+        self.editor.screen.blit(rect, (0, 0))
 
 
 class StyleHandler:
@@ -105,25 +114,28 @@ class StyleHandler:
             for word in words:
                 if word.startswith("!"):
                     parsed_line.append((word, "italic"))
+                if word.startswith("#"):
+                    parsed_line.append((word, "bold"))
                 else:
                     parsed_line.append((word, "normal"))
             parsed_lines.append(parsed_line)
         return parsed_lines
     
     def removeMarkup(self, content: str) -> str:
-        content = content.replace("[~|norm|~]", "")
-        content = content.replace("[~|ital|~]", "")
-        content = content.replace("[~|bold|~]", "")
-        content = content.replace("[~|i+bol|~]", "")
+        content = content.replace("", "")
+        content = content.replace("", "")
+        content = content.replace("", "")
+        content = content.replace("", "")
         return content
     
-    def loadTheme(self) -> tuple[str, str, str, str]:
-        theme: dict = json.load(open("themes/current.json", "r"))
+    def loadTheme(self, themepath: str = "themes/1.json") -> tuple[str, str, str, str, str]:
+        theme: dict = json.load(open(themepath, "r"))
         textColor = theme["textColor"]
-        backgroundColor = theme["backgroundColor"]
+        backgroundColor1 = theme["backgroundColor1"]
+        backgroundColor2 = theme["backgroundColor2"]
         cursorColor = theme["cursorColor"]
         outlineColor = theme["outlineColor"]
-        return textColor, backgroundColor, cursorColor, outlineColor
+        return textColor, backgroundColor1, backgroundColor2, cursorColor, outlineColor
 
 class Editor:
     def __init__(self, filepath: str):
@@ -131,7 +143,7 @@ class Editor:
         if not os.path.isfile(self.filepath):
             print("Error: no such file")
             sys.exit(1)
-        with open(self.filepath, "r") as file:
+        with open(filepath, "r") as file:
             self.content = file.read()
             file.close()
         self.file = open(self.filepath, "w")
@@ -141,9 +153,10 @@ class Editor:
         pygame.display.set_caption(f"Aurum - {self.filepath}")
         self.styleHandler = StyleHandler(self)
         self.textColor = self.styleHandler.loadTheme()[0]
-        self.backgroundColor = self.styleHandler.loadTheme()[1]
-        self.cursorColor = self.styleHandler.loadTheme()[2]
-        self.outlineColor = self.styleHandler.loadTheme()[3]
+        self.backgroundColor1 = self.styleHandler.loadTheme()[1]
+        self.backgroundColor2 = self.styleHandler.loadTheme()[2]
+        self.cursorColor = self.styleHandler.loadTheme()[3]
+        self.outlineColor = self.styleHandler.loadTheme()[4]
         self.keyHandler = KeyHandler(self)
         self.graphicsHandler = GraphicsHandler(self)
         self.isUppercase = False
@@ -153,12 +166,31 @@ class Editor:
         self.cursorPosition = len(self.content)
         self.verticalOffset = 0
         self.linesPerPage = HEIGHT // (self.graphicsHandler.fonts["normal"].get_height() + 2)
+        self.autoSaveInterval = len(self.styleHandler.removeMarkup(self.content)) / 1000
+        self.timeSinceLastSave = 0
+        self.saveFile()
+        self.undoStack = []
+        self.redoStack = []
+        self.saveState()  # Save the initial state
+
+    def saveState(self):
+        self.undoStack.append((self.content, self.cursorPosition))
+
+    def undo(self):
+        if self.undoStack:
+            self.redoStack.append((self.content, self.cursorPosition))
+            self.content, self.cursorPosition = self.undoStack.pop()
+
+    def redo(self):
+        if self.redoStack:
+            self.undoStack.append((self.content, self.cursorPosition))
+            self.content, self.cursorPosition = self.redoStack.pop()
 
     def saveFile(self):
         content = self.styleHandler.removeMarkup(self.content)
-        self.file.write(content)
-        self.file.close()
-        sys.exit(0)
+        with open(self.filepath, "w") as file:
+            file.write(content)
+            file.close()
 
     def update(self):
         if self.content == "":
@@ -179,6 +211,7 @@ class Editor:
                 elif key_output in self.nonCharKeys:
                     # Handle special non-character keys here
                     if key_output == "\t":
+                        self.saveState()
                         self.content = self.content[:self.cursorPosition] + key_output + self.content[self.cursorPosition:]
                         self.cursorPosition += 1
                     if key_output == "left shift":
@@ -206,8 +239,23 @@ class Editor:
                 
                 elif self.isKeyBind and key_output == "s":
                     self.saveFile()
+                
+                elif self.isKeyBind and key_output == "z":
+                    self.undo()
+                
+                elif self.isKeyBind and key_output == "y":
+                    self.redo()
+
+                elif self.isKeyBind and key_output in "123456789":
+                    if os.path.isfile(f"themes/{key_output}.json"):
+                        self.textColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[0]
+                        self.backgroundColor1 = self.styleHandler.loadTheme(f"themes/{key_output}.json")[1]
+                        self.backgroundColor2 = self.styleHandler.loadTheme(f"themes/{key_output}.json")[2]
+                        self.cursorColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[3]
+                        self.outlineColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[4]
 
                 elif key_output is not None:
+                    self.saveState()
                     # Insert character at cursor position
                     if self.isUppercase and key_output in self.uppercaseReplacement.keys():
                         key_output = self.uppercaseReplacement[key_output]
@@ -223,11 +271,19 @@ class Editor:
                 if event.key == pygame.K_LCTRL:
                     self.isKeyBind = False
 
+        activeFPS = self.clock.get_fps()
+        deltaTime = 1 / activeFPS if activeFPS != 0 else 1 / FPS
+        self.timeSinceLastSave += deltaTime
+        if self.timeSinceLastSave >= self.autoSaveInterval:
+            self.timeSinceLastSave = 0
+            self.saveFile()
+
         self.keyHandler.onUpdate()
         pygame.display.update()
+        self.clock.tick(FPS)
 
     def draw(self):
-        self.screen.fill(self.backgroundColor)
+        self.graphicsHandler.drawBackground()
 
         # Calculate the current line of the cursor
         cursor_line = (self.content[:self.cursorPosition].count('\n') + 1)
@@ -238,9 +294,13 @@ class Editor:
         elif cursor_line >= self.verticalOffset + self.linesPerPage:
             self.verticalOffset = cursor_line - self.linesPerPage
 
-        self.graphicsHandler.drawContent(self.styleHandler.parseContent(self.content), self.verticalOffset, OFFSET)
+        parsedContent = self.styleHandler.parseContent(self.content)
+        for line in parsedContent:
+            for word in line:
+                if word[0].startswith("!") and word[1] == "normal":
+                    parsedContent[parsedContent.index(line)].remove(word)
+        self.graphicsHandler.drawContent(parsedContent, self.verticalOffset, OFFSET)
         self.graphicsHandler.drawCursor()
-
     def run(self):
         while True:
             self.update()
@@ -248,13 +308,13 @@ class Editor:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2:
-        with open(sys.argv[1], "w") as file:
+        with open(sys.argv[1], "a") as file:
             print(f"Creating/opening file '{sys.argv[1]}'...")
             file.close()
         editor = Editor(sys.argv[1])
         editor.run()
     else:
-        with open("untitled.txt", "w") as file:
+        with open("untitled.txt", "a") as file:
             print(f"Creating/opening file 'untitled.txt'...")
             file.close()
         editor = Editor("untitled.txt")
