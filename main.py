@@ -3,6 +3,11 @@ import sys
 import pygame
 from settings import *
 import json
+import tkinter
+import colorama
+from colorama import Fore, Back, Style
+
+colorama.init(autoreset = True)
 
 class KeyHandler:
     def __init__(self, editor):
@@ -38,7 +43,11 @@ class GraphicsHandler:
         self.fonts = {"normal": pygame.font.SysFont("Consolas", 16),
                       "bold": pygame.font.SysFont("Consolas", 16, True),
                       "italic": pygame.font.SysFont("Consolas", 16, False, True),
-                      "bold+italic": pygame.font.SysFont("Consolas", 16, True, True)}
+                      "bold+italic": pygame.font.SysFont("Consolas", 16, True, True),
+                      "normal_small": pygame.font.SysFont("Consolas", 4),
+                      "bold_small": pygame.font.SysFont("Consolas", 4, True),
+                      "italic_small": pygame.font.SysFont("Consolas", 4, False, True),
+                      "bold+italic_small": pygame.font.SysFont("Consolas", 4, True, True)}
     
     def parseLine(self, line: str) -> list[tuple[str, str]]:
         words = line.split(" ")
@@ -64,18 +73,27 @@ class GraphicsHandler:
             text = font.render(element.replace("\t", "    "), True, self.editor.textColor)
             self.editor.screen.blit(text, (pos[0] + prev_len, pos[1]))
             prev_len += text.get_width() + font.render(" ", True, "white").get_width()
+
+    def renderSmallLine(self, pos: tuple[int, int], line: list[tuple[str, str]]):
+        prev_len = 0
+        for idx, (element, style) in enumerate(line):
+            font = self.fonts[style + "_small"]
+            text = font.render(element.replace("\t", "    "), True, self.editor.textColor)
+            self.editor.screen.blit(text, (pos[0] + prev_len, pos[1]))
+            prev_len += text.get_width() + font.render(" ", True, "white").get_width()
     
-    def drawContent(self, content: list[list[tuple[str, str]]], vertical_offset: int, start_pos: tuple[int, int] = (0, 0)):
+    def drawContent(self, content: list[list[tuple[str, str]]], horizontalOffset: int, vertical_offset: int, start_pos: tuple[int, int] = (0, 0)):
         y_offset = self.fonts["normal"].render("W", True, "white").get_height() + 2
+        x_offset = self.fonts["normal"].render("W", True, "white").get_width()
         line_number_width = max(30, len(str(len(content))) * 10)
 
         for idx, line in enumerate(content):
             line_number_text = self.fonts["normal"].render(str(idx + 1), True, self.editor.textColor)
-            self.editor.screen.blit(line_number_text, (start_pos[0], start_pos[1] + y_offset * idx - vertical_offset * y_offset))
+            self.editor.screen.blit(line_number_text, (start_pos[0] - horizontalOffset * x_offset, start_pos[1] + y_offset * idx - vertical_offset * y_offset))
 
-            text_start_pos = (start_pos[0] + line_number_width, start_pos[1] + y_offset * idx - vertical_offset * y_offset)
+            text_start_pos = (start_pos[0] + line_number_width - horizontalOffset * x_offset, start_pos[1] + y_offset * idx - vertical_offset * y_offset)
             self.renderLine(text_start_pos, line)
-        pygame.draw.line(self.editor.screen, self.editor.outlineColor, (start_pos[0] + line_number_width, start_pos[1]), (start_pos[0] + line_number_width, HEIGHT))
+        pygame.draw.line(self.editor.screen, self.editor.outlineColor, (start_pos[0] + line_number_width - horizontalOffset * x_offset, start_pos[1]), (start_pos[0] + line_number_width, HEIGHT))
 
     def drawCursor(self):
         # Calculate the actual cursor position considering tabs
@@ -99,6 +117,19 @@ class GraphicsHandler:
         pygame.draw.line(surf, c2, (0, 1), (1, 1))
         rect = pygame.transform.smoothscale(surf, (WIDTH, HEIGHT))
         self.editor.screen.blit(rect, (0, 0))
+
+    def drawSmallCodeWindow(self, horizonalOffset: int, vertical_offset: int):
+        start_pos = OFFSET[0], OFFSET[1]
+        y_offset = self.fonts["normal_small"].render("W", True, "white").get_height() + 2
+        x_offset = self.fonts["normal_small"].render("W", True, "white").get_width()
+        line_number_width = max(30, len(str(len(self.editor.content))) * 10)
+
+        for idx, line in enumerate(self.editor.styleHandler.parseContent(self.editor.content)):
+            #line_number_text = self.fonts["normal_small"].render(str(idx + 1), True, self.editor.textColor)
+            #self.editor.screen.blit(line_number_text, (start_pos[0], start_pos[1] + y_offset * idx))
+
+            text_start_pos = (start_pos[0] + line_number_width - horizonalOffset * x_offset, start_pos[1] + y_offset * idx - vertical_offset * y_offset)
+            self.renderSmallLine(text_start_pos, line)
 
 
 class StyleHandler:
@@ -152,11 +183,13 @@ class Editor:
         self.screen = pygame.display.set_mode(RESOLUTION)
         pygame.display.set_caption(f"Aurum - {self.filepath}")
         self.styleHandler = StyleHandler(self)
-        self.textColor = self.styleHandler.loadTheme()[0]
-        self.backgroundColor1 = self.styleHandler.loadTheme()[1]
-        self.backgroundColor2 = self.styleHandler.loadTheme()[2]
-        self.cursorColor = self.styleHandler.loadTheme()[3]
-        self.outlineColor = self.styleHandler.loadTheme()[4]
+        self.currentTheme = json.load(open("themes/current.json", "r"))["current_theme"]
+        theme = self.styleHandler.loadTheme(self.currentTheme)
+        self.textColor = theme[0]
+        self.backgroundColor1 = theme[1]
+        self.backgroundColor2 = theme[2]
+        self.cursorColor = theme[3]
+        self.outlineColor = theme[4]
         self.keyHandler = KeyHandler(self)
         self.graphicsHandler = GraphicsHandler(self)
         self.isUppercase = False
@@ -165,6 +198,7 @@ class Editor:
         self.uppercaseReplacement = {"1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")", "-": "_", "=" :"+", "`": "~", "'": "\"", ",": "<", ".": ">", "/": "?", ";": ":"}
         self.cursorPosition = len(self.content)
         self.verticalOffset = 0
+        self.horizontalOffset = 0
         self.linesPerPage = HEIGHT // (self.graphicsHandler.fonts["normal"].get_height() + 2)
         self.autoSaveInterval = len(self.styleHandler.removeMarkup(self.content)) / 1000
         self.timeSinceLastSave = 0
@@ -192,6 +226,17 @@ class Editor:
             file.write(content)
             file.close()
 
+    def getClipboardContent(self) -> str:
+        root = tkinter.Tk()
+        pastedText = root.clipboard_get()
+        root.destroy()
+        return pastedText
+    
+    def setClipboardContent(self, content: str):
+        root = tkinter.Tk()
+        root.clipboard_append(content)
+        root.destroy()
+
     def update(self):
         if self.content == "":
             self.cursorPosition = 0
@@ -207,6 +252,8 @@ class Editor:
                     if self.cursorPosition != 0:
                         self.content = self.content[:self.cursorPosition - 1] + self.content[self.cursorPosition:]
                         self.cursorPosition -= 1
+                        if self.horizontalOffset != 0:
+                            self.horizontalOffset -= 1
 
                 elif key_output in self.nonCharKeys:
                     # Handle special non-character keys here
@@ -224,6 +271,8 @@ class Editor:
                     elif key_output == "left":
                         if self.cursorPosition > 0:
                             self.cursorPosition -= 1
+                        if self.horizontalOffset != 0:
+                            self.horizontalOffset -= 1
                     elif key_output == "up":
                         beforeContent = self.content[:self.cursorPosition]
                         if len(beforeContent.split("\n")) != 1:
@@ -245,14 +294,24 @@ class Editor:
                 
                 elif self.isKeyBind and key_output == "y":
                     self.redo()
+                
+                elif self.isKeyBind and key_output == "w":
+                    pass
+
+                elif self.isKeyBind and key_output == "v":
+                    self.saveState()
+                    pastedText = self.getClipboardContent()
+                    self.content = self.content[:self.cursorPosition] + pastedText + self.content[self.cursorPosition:]
+                    self.cursorPosition += len(pastedText)
 
                 elif self.isKeyBind and key_output in "123456789":
                     if os.path.isfile(f"themes/{key_output}.json"):
-                        self.textColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[0]
-                        self.backgroundColor1 = self.styleHandler.loadTheme(f"themes/{key_output}.json")[1]
-                        self.backgroundColor2 = self.styleHandler.loadTheme(f"themes/{key_output}.json")[2]
-                        self.cursorColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[3]
-                        self.outlineColor = self.styleHandler.loadTheme(f"themes/{key_output}.json")[4]
+                        self.currentTheme = f"themes/{key_output}.json"
+                        self.textColor = self.styleHandler.loadTheme(self.currentTheme)[0]
+                        self.backgroundColor1 = self.styleHandler.loadTheme(self.currentTheme)[1]
+                        self.backgroundColor2 = self.styleHandler.loadTheme(self.currentTheme)[2]
+                        self.cursorColor = self.styleHandler.loadTheme(self.currentTheme)[3]
+                        self.outlineColor = self.styleHandler.loadTheme(self.currentTheme)[4]
 
                 elif key_output is not None:
                     self.saveState()
@@ -277,6 +336,21 @@ class Editor:
         if self.timeSinceLastSave >= self.autoSaveInterval:
             self.timeSinceLastSave = 0
             self.saveFile()
+            json.dump({"current_theme": self.currentTheme}, open("themes/current.json", "w"))
+
+        if pygame.key.get_pressed()[pygame.K_PAGEUP]:
+            beforeContent = self.content[:self.cursorPosition]
+            if len(beforeContent.split("\n")) != 1:
+                self.cursorPosition -= len(beforeContent.split("\n")[-1]) + 1
+            else:
+                self.cursorPosition = 0
+
+        if pygame.key.get_pressed()[pygame.K_PAGEDOWN]:
+            afterContent = self.content[self.cursorPosition:]
+            if len(afterContent.split("\n")) != 1:
+                self.cursorPosition += len(afterContent.split("\n")[0]) + 1
+            else:
+                self.cursorPosition = len(self.content)
 
         self.keyHandler.onUpdate()
         pygame.display.update()
@@ -285,22 +359,30 @@ class Editor:
     def draw(self):
         self.graphicsHandler.drawBackground()
 
-        # Calculate the current line of the cursor
-        cursor_line = (self.content[:self.cursorPosition].count('\n') + 1)
+        if self.isKeyBind and pygame.key.get_pressed()[pygame.K_w]:
+            self.graphicsHandler.drawSmallCodeWindow(self.horizontalOffset, self.verticalOffset)
+        else:
+            # Calculate the current line of the cursor
+            cursor_line = (self.content[:self.cursorPosition].count('\n') + 1)
 
-        # Adjust vertical offset if the cursor is outside the visible range
-        if cursor_line < self.verticalOffset:
-            self.verticalOffset = max(cursor_line - 1, 0)
-        elif cursor_line >= self.verticalOffset + self.linesPerPage:
-            self.verticalOffset = cursor_line - self.linesPerPage
+            # Adjust vertical offset if the cursor is outside the visible range
+            if cursor_line < self.verticalOffset:
+                self.verticalOffset = max(cursor_line - 1, 0)
+            elif cursor_line >= self.verticalOffset + self.linesPerPage:
+                self.verticalOffset = cursor_line - self.linesPerPage
+            
+            cursor_x = len(self.content[:self.cursorPosition].split("\n")[-1])
+            if (cursor_x + 2) * self.graphicsHandler.fonts["normal"].render("W", True, "white").get_width() + OFFSET[0] * 2 > WIDTH + self.horizontalOffset * self.graphicsHandler.fonts["normal"].render("W", True, "white").get_width():
+                self.horizontalOffset += 1
 
-        parsedContent = self.styleHandler.parseContent(self.content)
-        for line in parsedContent:
-            for word in line:
-                if word[0].startswith("!") and word[1] == "normal":
-                    parsedContent[parsedContent.index(line)].remove(word)
-        self.graphicsHandler.drawContent(parsedContent, self.verticalOffset, OFFSET)
-        self.graphicsHandler.drawCursor()
+            parsedContent = self.styleHandler.parseContent(self.content)
+            for line in parsedContent:
+                for word in line:
+                    if word[0].startswith("!") and word[1] == "normal":
+                        parsedContent[parsedContent.index(line)].remove(word)
+            self.graphicsHandler.drawContent(parsedContent, self.horizontalOffset, self.verticalOffset, OFFSET)
+            self.graphicsHandler.drawCursor()
+
     def run(self):
         while True:
             self.update()
@@ -312,10 +394,28 @@ if __name__ == "__main__":
             print(f"Creating/opening file '{sys.argv[1]}'...")
             file.close()
         editor = Editor(sys.argv[1])
-        editor.run()
+        backup = editor.styleHandler.removeMarkup(editor.content)
+        try:
+            editor.run()
+        except:
+            print(Fore.RED + "Unexpected error: writing file backup...")
+            with open(sys.argv[1], "w") as file:
+                file.write(backup)
+                file.close()
+            print(Fore.GREEN + "Rollback completed!")
+            sys.exit(2)
     else:
         with open("untitled.txt", "a") as file:
             print(f"Creating/opening file 'untitled.txt'...")
             file.close()
         editor = Editor("untitled.txt")
-        editor.run()
+        backup = editor.styleHandler.removeMarkup(editor.content)
+        try:
+            editor.run()
+        except:
+            print(Fore.RED + "Unexpected error: writing file backup...")
+            with open("untitled.txt", "w") as file:
+                file.write(backup)
+                file.close()
+            print(Fore.GREEN + "Rollback completed!")
+            sys.exit(2)
